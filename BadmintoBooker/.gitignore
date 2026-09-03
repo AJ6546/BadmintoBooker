@@ -1,0 +1,6 @@
+bin/
+obj/
+booking.log
+error_*.png
+session_state.json
+.vs/
