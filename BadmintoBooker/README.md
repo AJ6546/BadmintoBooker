@@ -171,9 +171,6 @@ manually on the site, or the next run may not price up correctly.
 Build in **Release**, then zip `bin\Release\net8.0\`. `appsettings.json` is
 in there and can be edited in Notepad after extracting.
 
-Delete `session_state.json` first if one is present — it's left over from an
-earlier approach and contains live login cookies.
-
 Whoever runs it still needs .NET 8, the Playwright browser install, and their
 own environment variables set.
 
