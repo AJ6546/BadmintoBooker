@@ -33,8 +33,11 @@ public static class Program
         }
         finally
         {
-            Console.WriteLine("\nPress Enter to close...");
-            Console.ReadLine();
+            if (Environment.UserInteractive && !Console.IsInputRedirected)
+            {
+                Console.WriteLine("\nPress Enter to close...");
+                Console.ReadLine();
+            }
         }
     }
 
