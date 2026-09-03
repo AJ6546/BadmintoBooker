@@ -6,7 +6,13 @@ namespace BadmintoBooker.Services
     {
         private readonly string path;
 
-        public LogService(string path) => this.path = path;
+        public LogService(string path)
+        {
+            this.path = path;
+
+            try { File.WriteAllText(path, string.Empty); }
+            catch { }
+        }
 
         public void Write(string message)
         {
