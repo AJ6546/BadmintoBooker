@@ -7,11 +7,11 @@ using System.Text.Json;
 
 namespace BadmintoBooker;
 
-internal static class Program
+public static class Program
 {
     private static async Task<int> Main()
     {
-        var dir = ProjectDir();
+        var dir = AppDir();
         ILogService log = new LogService(Path.Combine(dir, "booking.log"));
 
         try
@@ -160,12 +160,7 @@ internal static class Program
 
     // ---- Helpers --------------------------------------------------------
 
-    private static string ProjectDir()
-    {
-        var dir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, @"..\..\.."));
-        Directory.CreateDirectory(dir);
-        return dir;
-    }
+    private static string AppDir() => AppContext.BaseDirectory;
 
     /// <summary>Latest date inside the booking window falling on the given weekday.</summary>
     private static DateOnly FurthestBookable(DayOfWeek want, AppConfig config)
