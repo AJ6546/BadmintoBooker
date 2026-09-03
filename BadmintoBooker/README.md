@@ -1,21 +1,21 @@
 # Badminton Booker
 
 A small console app that books my regular No Strings badminton sessions at
-Places Leisure Camberley, so I stop forgetting to.
+Places Leisure Camberley, as I stop forgetting.
 
 ## Why
 
 The Tuesday and Friday sessions open for booking 8 days ahead, at the
 session's own start time — so the Tuesday 20:15 court unlocks at 20:15 on the
-Monday before. They're popular, and the good ones go quickly.
+Monday before. They're popular, and the slots get booked within a couple of days.
 
-I kept forgetting, remembering two days later, and finding the court full.
+I kept forgetting, remembering two days later, and finding the slots full.
 This books it for me.
 
 ## Status
 
-Right now it's a console app that has to be **run manually**. Automatic
-scheduling is the next thing to add — see [Still to do](#still-to-do).
+Working. Runs on a schedule via Windows Task Scheduler — see
+[Scheduling](#scheduling). Can also be run by hand any time.
 
 ## What it does
 
@@ -174,15 +174,78 @@ in there and can be edited in Notepad after extracting.
 Whoever runs it still needs .NET 8, the Playwright browser install, and their
 own environment variables set.
 
+## Scheduling
+
+One task with two triggers covers both courts: Monday's run books Tuesday's
+slot, Thursday's run books Friday's. Each run books at most one session, and
+the app works out which on its own.
+
+### Before you schedule
+
+Set these in `appsettings.json` and rebuild in Release:
+
+```json
+  "reallyPay": true,
+  "headless": true,
+  "pauseOnCheckout": false,
+```
+
+A scheduled run has no console to type into, so anything that waits for
+input will hang forever. `pauseOnCheckout` must be off, and the
+`Console.ReadLine()` at the end of `Main` is wrapped in an
+`Environment.UserInteractive` check for the same reason.
+
+### Creating the task
+
+Open **Task Scheduler** and click **Create Task** — not Create Basic Task,
+which doesn't expose the options needed.
+
+**General**
+- Name: `Badminton booker`
+- Select **Run whether user is logged on or not** (keeps the console window
+  off your desktop). Leave **Do not store password** unticked, or it won't
+  run while you're logged off.
+- Tick **Run with highest privileges**
+- Configure for: **Windows 10** (the newest option; covers Windows 11)
+
+**Triggers** — add two, both Weekly, recurring every 1 week, at **20:15:30**:
+- One ticking **Monday** — books Tuesday's court
+- One ticking **Thursday** — books Friday's court
+
+The thirty seconds past the hour is deliberate: slots release exactly on the
+minute, and arriving a moment late is safer than a moment early.
+
+**Actions** → New → Start a program
+- Program: the full path to `BadmintoBooker.exe`
+- **Start in**: the folder containing it, without the exe name. This one
+  matters — without it Windows runs the program from `System32` and relative
+  paths break.
+
+**Conditions**
+- Tick **Wake the computer to run this task**. A sleeping machine simply
+  doesn't run it.
+- On a laptop, untick **Start the task only if the computer is on AC power**,
+  or it silently skips when unplugged.
+
+**Settings**
+- Tick **Run task as soon as possible after a scheduled start is missed**
+
+Click OK and enter your Windows password when prompted.
+
+### Testing it
+
+Right-click the task → **Run**. Nothing visible happens. Check `booking.log`
+next to the exe a minute later to see whether it logged in and what it found.
+
+Do that first with `reallyPay: false` so a misconfigured task can't spend
+money, then flip it and rebuild.
+
 ## Still to do
 
-- **Scheduling.** Windows Task Scheduler, one task per weekday, firing at the
-  moment the slot opens (20:15 the Monday before for Tuesday's court, 20:15
-  the Thursday before for Friday's). Needs `headless: true` and
-  `pauseOnCheckout: false`, plus **Wake the computer to run this task**
-  ticked — a sleeping machine just doesn't run it.
 - Some kind of notification when a run fails, so a silent break doesn't cost
   weeks of badminton before I notice.
+- Handle the case where payment succeeds but the final page-load check times
+  out — right now the log says failed when the booking actually went through.
 
 ## Things that will break it
 

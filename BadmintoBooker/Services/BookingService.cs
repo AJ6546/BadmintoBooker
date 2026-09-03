@@ -6,13 +6,18 @@ using System.Text.RegularExpressions;
 
 namespace BadmintoBooker.Services;
 
-public class BookingService: IBookingService
+public class BookingService : IBookingService
 {
     private const int LoginTimeoutMs = 30_000;
     private const int PayTimeoutMs = 30_000;
     private const int CookieBannerTimeoutMs = 4_000;
+
     private const int BasketPollMs = 500;
     private const int BasketPollAttempts = 15;
+
+    // How long to wait after clicking Book before deciding the lease failed.
+    private const int LeasePollMs = 500;
+    private const int LeasePollAttempts = 30;
 
     private readonly IPage page;
     private readonly ILogService log;
@@ -25,8 +30,8 @@ public class BookingService: IBookingService
         this.config = config;
     }
 
-    private string LoginUrl => config.BaseUrl + "/auth/login";
-    private string DetailsUrl => config.BaseUrl + "/book/details";
+    private string LoginUrl => config.BaseUrl.TrimEnd('/') + "/auth/login";
+    private string DetailsUrl => config.BaseUrl.TrimEnd('/') + "/book/details";
 
     public async Task LoginAsync(string user, string pass)
     {
@@ -36,11 +41,10 @@ public class BookingService: IBookingService
         try
         {
             await page.GetByRole(AriaRole.Button, new() { Name = "Accept" })
-                   .First.ClickAsync(new() { Timeout = CookieBannerTimeoutMs });
+                      .First.ClickAsync(new() { Timeout = CookieBannerTimeoutMs });
         }
-        catch (TimeoutException ex) 
+        catch (TimeoutException)
         {
-            log.Write($"{ex}, Timed out");
         }
 
         await page.GetByPlaceholder("Enter your email").FillAsync(user);
@@ -48,7 +52,7 @@ public class BookingService: IBookingService
         await page.Locator("[data-qa-id='login-submit-btn']").ClickAsync();
 
         await page.WaitForURLAsync(u => !u.Contains("/auth/login"),
-                                new() { Timeout = LoginTimeoutMs });
+                                   new() { Timeout = LoginTimeoutMs });
         log.Write("Logged in.");
     }
 
@@ -56,6 +60,7 @@ public class BookingService: IBookingService
     {
         var url = BuildUrl(slot, date);
         log.Write($"Navigating: {url}");
+
         await page.GotoAsync(url);
         await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
@@ -64,6 +69,14 @@ public class BookingService: IBookingService
 
         if (await page.GetByText("Do you already have an account?").CountAsync() > 0)
             throw new Exception("Not logged in — session was lost.");
+
+        // The site leaves the Book button enabled even when you're already on
+        // the session; it only fails server-side. Catch it here instead.
+        if (await page.GetByText("You already have a booking at this time").CountAsync() > 0)
+        {
+            log.Write("Already have a booking at this time — skipping.");
+            return false;
+        }
 
         var bookBtn = page.Locator("[data-qa-id='add-to-basket-btn']");
 
@@ -88,9 +101,28 @@ public class BookingService: IBookingService
 
         await bookBtn.ClickAsync();
 
+        // The page doesn't navigate — it swaps in a "Go to your basket" button.
+        // A refused lease shows an untranslated error key instead.
         var goToBasket = page.GetByRole(AriaRole.Button,
             new() { NameRegex = new Regex("go to your basket", RegexOptions.IgnoreCase) });
-        await goToBasket.WaitForAsync(new() { Timeout = config.NavTimeoutMs });
+        var leaseError = page.GetByText("ERRORS.CREATE-LEASE");
+
+        var added = false;
+
+        for (var i = 0; i < LeasePollAttempts; i++)
+        {
+            if (await goToBasket.CountAsync() > 0) { added = true; break; }
+
+            if (await leaseError.CountAsync() > 0)
+                throw new Exception("Server refused the lease (CREATE-LEASE). " +
+                                    "Usually means already booked, or a stale basket item.");
+
+            await page.WaitForTimeoutAsync(LeasePollMs);
+        }
+
+        if (!added)
+            throw new Exception("Book was clicked but the basket link never appeared.");
+
         log.Write("Added to basket.");
 
         await goToBasket.ClickAsync();
@@ -99,6 +131,7 @@ public class BookingService: IBookingService
         var continueBtn = page.Locator("[data-qa-id='continue-to-payment-btn']");
         await continueBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible });
 
+        // Poll, never reload — reloading this page empties the basket server-side.
         for (var i = 0; i < BasketPollAttempts && !await continueBtn.IsEnabledAsync(); i++)
             await page.WaitForTimeoutAsync(BasketPollMs);
 
@@ -114,9 +147,14 @@ public class BookingService: IBookingService
 
         if (!config.ReallyPay)
         {
-            log.Write("STOPPED before payment (reallyPay = false).");
-            Console.WriteLine("\n>>> Paused on the checkout page. Press Enter to continue...");
-            Console.ReadLine();
+            log.Write("STOPPED before payment (reallyPay = false). Clear the basket manually.");
+
+            if (config.PauseOnCheckout)
+            {
+                Console.WriteLine("\n>>> Paused on the checkout page. Press Enter to continue...");
+                Console.ReadLine();
+            }
+
             return false;
         }
 
@@ -135,11 +173,16 @@ public class BookingService: IBookingService
             await page.ScreenshotAsync(new() { Path = path, FullPage = true });
             log.Write($"Screenshot: {Path.GetFileName(path)}");
         }
-        catch { }
+        catch
+        {
+            
+        }
     }
 
     private string BuildUrl(Slot s, DateOnly date)
     {
+        // activityId carries the LOCAL start time; the query string carries UTC.
+        // TimeZoneInfo handles the BST/GMT switch so this survives October.
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById("GMT Standard Time");
 
         string ToUtc(TimeOnly local, int shaveSeconds)
@@ -151,7 +194,7 @@ public class BookingService: IBookingService
         }
 
         return DetailsUrl +
-               $"?activityEndTime={ToUtc(s.LocalEnd, 1)}" +
+               $"?activityEndTime={ToUtc(s.LocalEnd, 1)}" +   // sessions end at :59
                $"&activityGroupId={s.ActivityGroupId}" +
                $"&activityId={s.ActivityId}" +
                $"&activityStartTime={ToUtc(s.LocalStart, 0)}" +
