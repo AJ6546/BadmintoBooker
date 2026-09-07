@@ -9,7 +9,7 @@ namespace BadmintoBooker.Services;
 public class BookingService : IBookingService
 {
     private const int LoginTimeoutMs = 30_000;
-    private const int PayTimeoutMs = 30_000;
+    private const int PayTimeoutMs = 60_000;
     private const int CookieBannerTimeoutMs = 4_000;
 
     private const int BasketPollMs = 500;
@@ -159,9 +159,19 @@ public class BookingService : IBookingService
         }
 
         await page.Locator("[data-qa-id='submit-price-btn']").ClickAsync();
-        await page.WaitForURLAsync("**/book/success**", new() { Timeout = PayTimeoutMs });
 
-        log.Write($"BOOKED. {new Uri(page.Url).Query}");
+        try
+        {
+            await page.WaitForURLAsync("**/book/success**", new() { Timeout = PayTimeoutMs });
+        }
+        catch (TimeoutException)
+        {
+            // The URL check is unreliable under load — confirm against the page itself
+            if (await page.GetByText("Booking Confirmed").CountAsync() == 0)
+                throw new Exception("Pay clicked but no confirmation seen. CHECK YOUR BOOKINGS.");
+        }
+
+        log.Write($"BOOKED. {page.Url}");
         return true;
     }
 
